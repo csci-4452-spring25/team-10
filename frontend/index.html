@@ -12,14 +12,12 @@
       padding: 20px;
       border: 1px solid #ddd;
       border-radius: 12px;
-     }
-
+    }
     input[type="text"] {
       width: 70%;
       padding: 10px;
       margin-right: 10px;
     }
-
     button {
       padding: 10px;
     }
@@ -33,7 +31,6 @@
       justify-content: space-between;
       align-items: center;
     }
-
     .delete-btn {
       background-color: #ff4d4f;
       color: white;
@@ -42,12 +39,49 @@
       border-radius: 6px;
       cursor: pointer;
     }
-
-    </style>
+  </style>
 </head>
 <body>
 
 <h2>📝 Task Manager</h2>
+
+<input type="text" id="taskInput" placeholder="Enter a task..." />
+<button onclick="addTask()">Add</button>
+
+<ul id="taskList">
+    <!-- Dummy tasks -->
+</ul>
+
+<script>
+    const dummyTasks = ["Buy groceries", "Finish project", "Call Alice"];
+    const taskList = document.getElementById("taskList");
+
+    // Render dummy tasks
+    dummyTasks.forEach(task => renderTask(task));
+
+    function renderTask(taskText) {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <span>${taskText}</span>
+        <button class="delete-btn" onclick="deleteTask(this)">Delete</button>
+      `;
+      taskList.appendChild(li);
+    }
+
+    function addTask() {
+      const input = document.getElementById("taskInput");
+      const task = input.value.trim();
+      if (task) {
+        renderTask(task);
+        input.value = "";
+      }
+    }
+
+    function deleteTask(button) {
+      const li = button.parentElement;
+      li.remove();
+    }
+  </script>
 
 </body>
 </html>
