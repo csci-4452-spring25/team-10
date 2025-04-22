@@ -1,3 +1,4 @@
+
 provider "aws" {
   region = "us-east-1"
 }
@@ -11,7 +12,6 @@ resource "random_id" "suffix" {
 }
 
 # S3 Static Website for Frontend
-
 resource "aws_s3_bucket" "frontend" {
   bucket = "frontend-${random_id.suffix.hex}"
   acl    = "public-read"
@@ -42,25 +42,29 @@ resource "aws_s3_bucket_policy" "public_read" {
   })
 }
 
-# DynamoDB Table for Task Storage
-
-resource "aws_dynamodb_table" "tasks" {
-  name         = "tasks"
+# DynamoDB Table
+resource "aws_dynamodb_table" "task_manager_data" {
+  name         = "task_manager_data"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "task_id"
+  hash_key     = "pk"
+  range_key    = "sk"
 
   attribute {
-    name = "task_id"
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
     type = "S"
   }
 
   tags = {
-    Name = "TaskTable"
+    Name = "TaskManagerData"
   }
 }
 
-# EC2 Flask Backend
-
+# Security group for HTTP access
 resource "aws_security_group" "allow_http" {
   name        = "allow_http"
   description = "Allow HTTP traffic"
@@ -80,163 +84,80 @@ resource "aws_security_group" "allow_http" {
   }
 }
 
+# EC2 Instance
 resource "aws_instance" "flask_server" {
   ami           = "ami-0c02fb55956c7d316"
   instance_type = "t2.micro"
-  # key_name can be added if SSH access is needed
   security_groups = [aws_security_group.allow_http.name]
 
   user_data = <<-EOF
               #!/bin/bash
               apt update -y
               apt install -y python3-pip awscli
-              pip3 install flask boto3
+              pip3 install flask flask-cors boto3
 
               mkdir -p /home/ubuntu/flask-app
-              cat <<EOL > /home/ubuntu/flask-app/app.py
+              cat <<PYCODE > /home/ubuntu/flask-app/app.py
               from flask import Flask, request, jsonify
+              from flask_cors import CORS
               import boto3
               import uuid
-              from datetime import datetime
+              from boto3.dynamodb.conditions import Key
 
               app = Flask(__name__)
-              dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
-              table = dynamodb.Table('tasks')
+              CORS(app)
+              dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
+              table = dynamodb.Table("task_manager_data")
 
-              @app.route('/tasks', methods=['POST'])
-              def create_task():
-                  data = request.get_json()
-                  task = {
-                      'task_id': str(uuid.uuid4()),
-                      'title': data['title'],
-                      'description': data.get('description', ''),
-                      'status': 'pending',
-                      'created_at': datetime.utcnow().isoformat()
-                  }
-                  table.put_item(Item=task)
-                  return jsonify(task), 201
+              @app.route("/<path:path>", methods=["GET", "POST", "DELETE", "OPTIONS"])
+              def proxy_all(path):
+                  return jsonify({"message": "Proxy route: " + path}), 200
 
-              @app.route('/tasks', methods=['GET'])
-              def list_tasks():
-                  response = table.scan()
-                  return jsonify(response.get('Items', []))
-
-              if __name__ == '__main__':
-                  app.run(host='0.0.0.0', port=80)
-              EOL
+              if __name__ == "__main__":
+                  app.run(host="0.0.0.0", port=80)
+              PYCODE
 
               nohup python3 /home/ubuntu/flask-app/app.py &
               EOF
 
   tags = {
-    Name = "FlaskAppInstance"
+    Name = "FlaskTaskManager"
   }
 }
 
-# API Gateway
-
+# API Gateway setup
 resource "aws_api_gateway_rest_api" "flask_api" {
   name        = "FlaskTaskAPI"
-  description = "API Gateway to forward requests to Flask app on EC2"
+  description = "Proxy to Flask running on EC2"
 }
 
-resource "aws_api_gateway_resource" "tasks" {
+resource "aws_api_gateway_resource" "any_path" {
   rest_api_id = aws_api_gateway_rest_api.flask_api.id
   parent_id   = aws_api_gateway_rest_api.flask_api.root_resource_id
-  path_part   = "tasks"
+  path_part   = "{proxy+}"
 }
 
-resource "aws_api_gateway_method" "post_tasks" {
+resource "aws_api_gateway_method" "any_method" {
   rest_api_id   = aws_api_gateway_rest_api.flask_api.id
-  resource_id   = aws_api_gateway_resource.tasks.id
-  http_method   = "POST"
+  resource_id   = aws_api_gateway_resource.any_path.id
+  http_method   = "ANY"
   authorization = "NONE"
 }
 
-resource "aws_api_gateway_method" "get_tasks" {
-  rest_api_id   = aws_api_gateway_rest_api.flask_api.id
-  resource_id   = aws_api_gateway_resource.tasks.id
-  http_method   = "GET"
-  authorization = "NONE"
-}
-
-resource "aws_api_gateway_method" "options_tasks" {
-  rest_api_id   = aws_api_gateway_rest_api.flask_api.id
-  resource_id   = aws_api_gateway_resource.tasks.id
-  http_method   = "OPTIONS"
-  authorization = "NONE"
-}
-
-resource "aws_api_gateway_integration" "post_integration" {
+resource "aws_api_gateway_integration" "proxy" {
   rest_api_id             = aws_api_gateway_rest_api.flask_api.id
-  resource_id             = aws_api_gateway_resource.tasks.id
-  http_method             = aws_api_gateway_method.post_tasks.http_method
+  resource_id             = aws_api_gateway_resource.any_path.id
+  http_method             = aws_api_gateway_method.any_method.http_method
+  integration_http_method = "ANY"
   type                    = "HTTP_PROXY"
-  integration_http_method = "POST"
-  uri                     = "http://${aws_instance.flask_server.public_dns}/tasks"
+  uri                     = "http://${aws_instance.flask_server.public_dns}/"
 }
 
-resource "aws_api_gateway_integration" "get_integration" {
-  rest_api_id             = aws_api_gateway_rest_api.flask_api.id
-  resource_id             = aws_api_gateway_resource.tasks.id
-  http_method             = aws_api_gateway_method.get_tasks.http_method
-  type                    = "HTTP_PROXY"
-  integration_http_method = "GET"
-  uri                     = "http://${aws_instance.flask_server.public_dns}/tasks"
-}
-
-resource "aws_api_gateway_integration" "options_integration" {
-  rest_api_id             = aws_api_gateway_rest_api.flask_api.id
-  resource_id             = aws_api_gateway_resource.tasks.id
-  http_method             = aws_api_gateway_method.options_tasks.http_method
-  type                    = "MOCK"
-
-  request_templates = {
-    "application/json" = "{\"statusCode\": 200}"
-  }
-
-  integration_response {
-    status_code = "200"
-
-    response_parameters = {
-      "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
-      "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,OPTIONS'"
-      "method.response.header.Access-Control-Allow-Origin"  = "'*'"
-    }
-
-    response_templates = {
-      "application/json" = ""
-    }
-  }
-}
-
-resource "aws_api_gateway_method_response" "options_response" {
-  rest_api_id = aws_api_gateway_rest_api.flask_api.id
-  resource_id = aws_api_gateway_resource.tasks.id
-  http_method = aws_api_gateway_method.options_tasks.http_method
-  status_code = "200"
-
-  response_models = {
-    "application/json" = "Empty"
-  }
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = true
-    "method.response.header.Access-Control-Allow-Methods" = true
-    "method.response.header.Access-Control-Allow-Origin"  = true
-  }
-}
-
-resource "aws_api_gateway_deployment" "flask_api_deployment" {
-  depends_on = [
-    aws_api_gateway_integration.post_integration,
-    aws_api_gateway_integration.get_integration
-  ]
+resource "aws_api_gateway_deployment" "flask_deployment" {
+  depends_on = [aws_api_gateway_integration.proxy]
   rest_api_id = aws_api_gateway_rest_api.flask_api.id
   stage_name  = "prod"
 }
-
-# Outputs
 
 output "s3_website_url" {
   value = aws_s3_bucket.frontend.website_endpoint
@@ -247,5 +168,5 @@ output "flask_app_ip" {
 }
 
 output "api_gateway_url" {
-  value = "https://${aws_api_gateway_rest_api.flask_api.id}.execute-api.${var.region}.amazonaws.com/${aws_api_gateway_deployment.flask_api_deployment.stage_name}/tasks"
+  value = "https://${aws_api_gateway_rest_api.flask_api.id}.execute-api.${var.region}.amazonaws.com/${aws_api_gateway_deployment.flask_deployment.stage_name}/"
 }
