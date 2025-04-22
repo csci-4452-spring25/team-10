@@ -2,9 +2,14 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import uuid
+import boto3
 
 app = Flask(__name__)
 CORS(app)  # allow frontend to talk to backend
+
+# Connect to DynamoDB
+dynamodb = boto3.resource('dynamodb', region_name='us-east-1')  # change region if needed
+table = dynamodb.Table('Tasks')
 
 # test list
 tasks = []
