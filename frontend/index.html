@@ -2,86 +2,183 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title> Kira Task Manager</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kira Task Manager</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
     <style>
+    * { box-sizing: border-box; }
     body {
-      font-family: sans-serif;
-      max-width: 500px;
-      margin: 40px auto;
+      font-family: 'Inter', sans-serif;
+      margin: 0;
+      background-color: #f4f5f7;
+    }
+    header {
+      background-color: #0052cc;
+      color: white;
       padding: 20px;
-      border: 1px solid #ddd;
-      border-radius: 12px;
+      text-align: center;
+      font-size: 1.5rem;
     }
-    input[type="text"] {
-      width: 70%;
+    #board-wrapper {
+      display: flex;
+      gap: 20px;
+      padding: 20px;
+      overflow-x: auto;
+    }
+    #board {
+      display: flex;
+      gap: 20px;
+    }
+    .column {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      height: calc(100vh - 160px);
+      background-color: #ebecf0;
+      border-radius: 8px;
       padding: 10px;
-      margin-right: 10px;
+      width: 300px;
+      flex-shrink: 0;
     }
-    button {
-      padding: 10px;
-    }
-    ul {
-      list-style: none;
-      padding-left: 0;
-    }
-    li {
-      margin: 10px 0;
+    .column-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      font-weight: 600;
+      margin-bottom: 10px;
     }
-    .delete-btn {
-      background-color: #ff4d4f;
+    .task-list { min-height: 20px; }
+    .task {
+      background-color: white;
+      padding: 10px;
+      margin-bottom: 10px;
+      border-radius: 6px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      min-height: 100px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .task strong { display: block; margin-bottom: 4px; }
+    .task-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .task-status {
+      position: relative;
+      font-size: 20px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+    }
+    .task-status .tooltip {
+      visibility: hidden;
+      opacity: 0;
+      position: absolute;
+      bottom: 130%;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: #333;
+      color: #fff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+      transition: opacity 0.3s ease;
+      z-index: 10;
+    }
+    .task-status:hover .tooltip {
+      visibility: visible;
+      opacity: 1;
+    }
+    .task-menu-btn {
+      background: none;
+      border: none;
+      font-size: 20px;
+      color: #444;
+      cursor: pointer;
+    }
+    .create-task-btn {
+      background: none;
+      border: none;
+      color: #0052cc;
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 6px;
+    }
+    .input-popup, .input-inline {
+      display: none;
+      margin-top: 10px;
+    }
+    .input-popup input, .input-popup textarea,
+    .input-inline input {
+      width: 100%;
+      padding: 8px;
+      border-radius: 5px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+    .input-inline {
+      display: none;
+      align-items: center;
+      margin-top: 6px;
+    }
+    .input-inline input {
+      font-size: 14px;
+      padding: 6px;
+      min-width: 140px;
+      max-width: 300px;
+      resize: none;
+      overflow: hidden;
+    }
+    .input-inline button {
+      margin-left: 6px;
+      padding: 6px 12px;
+      font-size: 14px;
+    }
+    button {
+      padding: 8px;
+      background-color: #0052cc;
       color: white;
       border: none;
-      padding: 6px 10px;
-      border-radius: 6px;
+      border-radius: 5px;
       cursor: pointer;
+    }
+    .add-column-section {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      padding: 0 10px;
+    }
+    .add-column-btn {
+      background: none;
+      border: none;
+      font-size: 20px;
+      color: #0052cc;
+      cursor: pointer;
+      margin-top: 6px;
     }
   </style>
 </head>
 <body>
-
-<h2>📝 Kira Task Manager</h2>
-
-<input type="text" id="taskInput" placeholder="Enter a task..." />
-<button onclick="addTask()">Add</button>
-
-<ul id="taskList">
-    <!-- Dummy tasks -->
-</ul>
-
-<script>
-    const dummyTasks = ["Buy groceries", "Finish project", "Call Alex"];
-    const taskList = document.getElementById("taskList");
-
-    // Render dummy tasks
-    dummyTasks.forEach(task => renderTask(task));
-
-    function renderTask(taskText) {
-      const li = document.createElement("li");
-      li.innerHTML = `
-        <span>${taskText}</span>
-        <button class="delete-btn" onclick="deleteTask(this)">Delete</button>
-      `;
-      taskList.appendChild(li);
-    }
-
-    function addTask() {
-      const input = document.getElementById("taskInput");
-      const task = input.value.trim();
-      if (task) {
-        renderTask(task);
-        input.value = "";
-      }
-    }
-
-    function deleteTask(button) {
-      const li = button.parentElement;
-      li.remove();
-    }
-  </script>
-
+<header>Kira Task Manager</header>
+<div id="board-wrapper">
+    <div id="board"></div>
+    <div class="add-column-section">
+        <button id="add-column-toggle" class="add-column-btn" title="Add Column" onclick="showColumnInput()">＋</button>
+        <div class="input-inline" id="new-column-popup">
+            <input type="text" id="column-name" placeholder="New column..." oninput="resizeInput(this)" />
+            <button onclick="createColumn()">Add</button>
+        </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+<script src="./app.js"></script>
 </body>
 </html>
