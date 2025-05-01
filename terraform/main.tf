@@ -1,20 +1,13 @@
-
 provider "aws" {
-  region = "us-east-1"
-}
-
-variable "region" {
-  default = "us-east-1"
+  region = var.region
 }
 
 resource "random_id" "suffix" {
   byte_length = 4
 }
 
-# S3 Static Website for Frontend
 resource "aws_s3_bucket" "frontend" {
   bucket = "frontend-${random_id.suffix.hex}"
-  acl    = "public-read"
 
   website {
     index_document = "index.html"
@@ -29,49 +22,44 @@ resource "aws_s3_bucket" "frontend" {
 resource "aws_s3_bucket_policy" "public_read" {
   bucket = aws_s3_bucket.frontend.id
 
+  depends_on = [aws_s3_bucket.frontend]
+
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
       {
-        Effect = "Allow",
+        Effect    = "Allow",
         Principal = "*",
-        Action = ["s3:GetObject"],
-        Resource = "${aws_s3_bucket.frontend.arn}/*"
+        Action    = ["s3:GetObject"],
+        Resource  = "${aws_s3_bucket.frontend.arn}/*"
       }
     ]
   })
 }
 
-# DynamoDB Table
 resource "aws_dynamodb_table" "task_manager_data" {
-  name         = "task_manager_data"
+  name         = "task-manager-data"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
-  range_key    = "sk"
+  hash_key     = "task_id"
 
   attribute {
-    name = "pk"
-    type = "S"
-  }
-
-  attribute {
-    name = "sk"
+    name = "task_id"
     type = "S"
   }
 
   tags = {
-    Name = "TaskManagerData"
+    Name = "TaskManagerTable"
   }
 }
 
-# Security group for HTTP access
-resource "aws_security_group" "allow_http" {
-  name        = "allow_http"
-  description = "Allow HTTP traffic"
+resource "aws_security_group" "flask_sg" {
+  name        = "flask-sg"
+  description = "Allow HTTP access"
+  vpc_id      = "vpc-0a5949f03da954a3b"  # Replace if not using default VPC
 
   ingress {
-    from_port   = 80
-    to_port     = 80
+    from_port   = 8080
+    to_port     = 8080
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -84,89 +72,26 @@ resource "aws_security_group" "allow_http" {
   }
 }
 
-# EC2 Instance
 resource "aws_instance" "flask_server" {
-  ami           = "ami-0c02fb55956c7d316"
-  instance_type = "t2.micro"
-  security_groups = [aws_security_group.allow_http.name]
+  ami                    = "ami-0c02fb55956c7d316"  # Amazon Linux 2 (Ubuntu would need different bootstrap)
+  instance_type          = "t2.micro"
+  key_name               = var.key_name
+  vpc_security_group_ids = [aws_security_group.flask_sg.id]
+  associate_public_ip_address = true
 
-  user_data = <<-EOF
-              #!/bin/bash
-              apt update -y
-              apt install -y python3-pip awscli
-              pip3 install flask flask-cors boto3
+user_data = <<-EOF
+  #!/bin/bash
+  yum update -y
+  amazon-linux-extras enable docker
+  yum install -y docker awscli
+  service docker start
+  usermod -a -G docker ec2-user
+  aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 448049833584.dkr.ecr.us-east-1.amazonaws.com
+  docker run -d -p 8080:8080 --name flask-app ${var.docker_image}
+EOF
 
-              mkdir -p /home/ubuntu/flask-app
-              cat <<PYCODE > /home/ubuntu/flask-app/app.py
-              from flask import Flask, request, jsonify
-              from flask_cors import CORS
-              import boto3
-              import uuid
-              from boto3.dynamodb.conditions import Key
-
-              app = Flask(__name__)
-              CORS(app)
-              dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
-              table = dynamodb.Table("task_manager_data")
-
-              @app.route("/<path:path>", methods=["GET", "POST", "DELETE", "OPTIONS"])
-              def proxy_all(path):
-                  return jsonify({"message": "Proxy route: " + path}), 200
-
-              if __name__ == "__main__":
-                  app.run(host="0.0.0.0", port=80)
-              PYCODE
-
-              nohup python3 /home/ubuntu/flask-app/app.py &
-              EOF
 
   tags = {
-    Name = "FlaskTaskManager"
+    Name = "FlaskDockerServer"
   }
-}
-
-# API Gateway setup
-resource "aws_api_gateway_rest_api" "flask_api" {
-  name        = "FlaskTaskAPI"
-  description = "Proxy to Flask running on EC2"
-}
-
-resource "aws_api_gateway_resource" "any_path" {
-  rest_api_id = aws_api_gateway_rest_api.flask_api.id
-  parent_id   = aws_api_gateway_rest_api.flask_api.root_resource_id
-  path_part   = "{proxy+}"
-}
-
-resource "aws_api_gateway_method" "any_method" {
-  rest_api_id   = aws_api_gateway_rest_api.flask_api.id
-  resource_id   = aws_api_gateway_resource.any_path.id
-  http_method   = "ANY"
-  authorization = "NONE"
-}
-
-resource "aws_api_gateway_integration" "proxy" {
-  rest_api_id             = aws_api_gateway_rest_api.flask_api.id
-  resource_id             = aws_api_gateway_resource.any_path.id
-  http_method             = aws_api_gateway_method.any_method.http_method
-  integration_http_method = "ANY"
-  type                    = "HTTP_PROXY"
-  uri                     = "http://${aws_instance.flask_server.public_dns}/"
-}
-
-resource "aws_api_gateway_deployment" "flask_deployment" {
-  depends_on = [aws_api_gateway_integration.proxy]
-  rest_api_id = aws_api_gateway_rest_api.flask_api.id
-  stage_name  = "prod"
-}
-
-output "s3_website_url" {
-  value = aws_s3_bucket.frontend.website_endpoint
-}
-
-output "flask_app_ip" {
-  value = aws_instance.flask_server.public_ip
-}
-
-output "api_gateway_url" {
-  value = "https://${aws_api_gateway_rest_api.flask_api.id}.execute-api.${var.region}.amazonaws.com/${aws_api_gateway_deployment.flask_deployment.stage_name}/"
 }
