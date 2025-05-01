@@ -29,5 +29,5 @@ jobs:
         run: |
           IMAGE_URI=448049833584.dkr.ecr.us-east-1.amazonaws.com/task-manager-api:latest
 
-          docker build -t $IMAGE_URI -f Dockerfile.yml .
+          docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
