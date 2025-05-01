@@ -1,47 +1,46 @@
-# imports
-from flask import Flask, request, jsonify
+# app.py 
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import uuid
 import boto3
-from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
+import os
 
-app = Flask(__name__)
-CORS(app)  # allow frontend to talk to backend
+app = Flask(__name__, static_folder=".", static_url_path="")
+CORS(app)
 
-# connect to DynamoDB (for vinh)
-dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
-table = dynamodb.Table("task_manager_data")
+# Connect to DynamoDB
+region = os.environ.get("AWS_REGION", "us-east-1")
+dynamodb = boto3.resource("dynamodb", region_name=region)
+table = dynamodb.Table("task-manager-data")
 
-# test list
-tasks = []
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
 
-# board and column
+@app.route("/")
+def index():
+    return send_from_directory(".", "index.html")
+
 @app.route("/board", methods=["GET"])
 def get_board():
-    board = {}
-    columns_resp = table.query(
-        KeyConditionExpression=Key("pk").eq("COLUMN")
-    )
-    columns = [item["sk"] for item in columns_resp.get("Items", [])]
-
-    for col in columns:
-        tasks_resp = table.query(
-            KeyConditionExpression=Key("pk").eq(f"TASK#{col}")
-        )
-        board[col] = tasks_resp.get("Items", [])
-    return jsonify(board), 200
+    try:
+        response = table.scan()
+        items = response.get("Items", [])
+        board = {}
+        for task in items:
+            col = task.get("column", "Uncategorized")
+            if col not in board:
+                board[col] = []
+            board[col].append(task)
+        return jsonify(board)
+    except ClientError as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/columns", methods=["POST"])
 def add_column():
-    data = request.json
-    name = data.get("name", "").strip()
-    if not name:
-        return jsonify({"error": "Column name required."}), 400
+    return jsonify({"message": "Columns are dynamic and handled client-side."}), 200
 
-    table.put_item(Item={"pk": "COLUMN", "sk": name})
-    return jsonify({"message": f"Column '{name}' added."}), 201
-
-# task methods
 @app.route("/tasks", methods=["POST"])
 def add_task():
     data = request.json
@@ -49,35 +48,54 @@ def add_task():
     title = data.get("title", "")
     description = data.get("description", "")
     status = data.get("status", "Not Started")
-
     if not column:
-        return jsonify({"error": "Column is required"}), 400
+        return jsonify({"error": "Missing column"}), 400
 
     task_id = "DP-" + str(uuid.uuid4())[:8]
     task = {
-        "pk": f"TASK#{column}",
-        "sk": task_id,
-        "id": task_id,
+        "task_id": task_id,
         "title": title,
         "description": description,
-        "status": status
+        "status": status,
+        "column": column
     }
 
-    table.put_item(Item=task)
-    return jsonify(task), 201
+    try:
+        table.put_item(Item=task)
+        return jsonify(task), 201
+    except ClientError as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/tasks/<task_id>", methods=["DELETE"])
 def delete_task(task_id):
-    # search all columns to find the task
-    columns = table.query(KeyConditionExpression=Key("pk").eq("COLUMN"))["Items"]
-    for col in columns:
-        col_name = col["sk"]
-        resp = table.query(KeyConditionExpression=Key("pk").eq(f"TASK#{col_name}"))
-        for task in resp["Items"]:
-            if task["id"] == task_id:
-                table.delete_item(Key={"pk": f"TASK#{col_name}", "sk": task_id})
-                return jsonify({"message": "Task deleted."}), 200
-    return jsonify({"error": "Task not found"}), 404
+    try:
+        table.delete_item(Key={"task_id": task_id})
+        return jsonify({"message": "Task deleted."}), 200
+    except ClientError as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/tasks/move", methods=["POST"])
+def move_task():
+    data = request.json
+    task_id = data.get("id")
+    to_col = data.get("to")
+    new_status = data.get("status") 
+
+    try:
+        response = table.get_item(Key={"task_id": task_id})
+        item = response.get("Item")
+        if not item:
+            return jsonify({"error": "Task not found."}), 404
+
+        item["column"] = to_col
+        if new_status:  
+            item["status"] = new_status
+
+        table.put_item(Item=item)
+        return jsonify(item), 200
+    except ClientError as e:
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, host="0.0.0.0", port=8080)
