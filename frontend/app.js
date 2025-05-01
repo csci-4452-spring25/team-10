@@ -1,5 +1,5 @@
 // app.js (updated for production API endpoint)
-const API_URL = "https://api.kiraTM.com";
+const API_URL = "http://3.87.167.52:8080";
 
 const boardContainer = document.getElementById("board");
 let boardData = {};
@@ -44,6 +44,18 @@ async function createColumn() {
   });
 
   if (res.ok) {
+
+    await fetch(`${API_URL}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "(empty)",
+        description: "",
+        column: name,
+        status: "Not Started"
+      })
+    });
+
     input.value = "";
     document.getElementById("new-column-popup").style.display = "none";
     document.getElementById("add-column-toggle").style.display = "inline-block";
@@ -73,16 +85,31 @@ function makeColumnTitleEditable(spanEl, oldName) {
   spanEl.replaceWith(input);
   input.focus();
 
-  function saveTitleChange() {
+  async function saveTitleChange() {
     const newName = input.value.trim();
     if (!newName || newName === oldName || boardData[newName]) {
       input.replaceWith(spanEl);
-    } else {
-      boardData[newName] = boardData[oldName];
-      delete boardData[oldName];
-      fetchBoard();
+      return;
     }
+  
+    const tasksToMove = boardData[oldName] || [];
+    for (const task of tasksToMove) {
+      await fetch(`${API_URL}/tasks/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: task.task_id || task.id,
+          from: oldName,
+          to: newName,
+          status: task.status
+        })
+      });
+    }
+  
+    input.replaceWith(spanEl);
+    fetchBoard();
   }
+  
 
   input.addEventListener("blur", saveTitleChange);
   input.addEventListener("keydown", (e) => {
@@ -104,7 +131,15 @@ async function moveTask(id, from, to) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id, from, to })
   });
-  fetchBoard();
+  
+  const task = boardData[from]?.find(t => t.id === id);
+  if (task) {
+    boardData[from] = boardData[from].filter(t => t.id !== id);
+    boardData[to] = boardData[to] || [];
+    boardData[to].push({ ...task, column: to });
+  }
+
+  renderBoard(boardData);
 }
 
 function toggleStatusMenu(taskId) {
@@ -152,6 +187,7 @@ function renderBoard(data) {
     colEl.appendChild(inputPopup);
 
     data[column].forEach(task => {
+      task.id = task.task_id || task.id;
       if (!task.status) task.status = "Not Started";
 
       const taskDiv = document.createElement("div");
@@ -198,10 +234,17 @@ function renderBoard(data) {
   }
 }
 
-function changeStatus(id, column, newStatus) {
+async function changeStatus(id, column, newStatus) {
   const task = boardData[column].find(t => t.id === id);
   if (task) {
     task.status = newStatus;
+    
+    await fetch(`${API_URL}/tasks/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: task.task_id || task.id, from: column, to: column, status: newStatus })
+    });
+
     renderBoard(boardData);
   }
 }
